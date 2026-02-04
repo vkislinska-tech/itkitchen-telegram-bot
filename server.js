@@ -42,6 +42,14 @@ app.post("/", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+
+// --------------------
+// POST маршрут для Telegram (тимчасово для дебагу)
+app.post("/", (req, res) => {
+  console.log("Incoming Telegram POST:", JSON.stringify(req.body, null, 2));
+  res.send("OK"); // щоб Telegram більше не давав 404
+});
+// --------------------
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
