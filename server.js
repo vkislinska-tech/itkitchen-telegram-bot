@@ -1,59 +1,48 @@
+// server.js
+
 const express = require("express");
-const bodyParser = require("body-parser");
-const axios = require("axios");
-
-const TG_TOKEN = "8588432224:AAE8eQA5xDJiWktiQnhDm0iYzuEd3yZk9s8";
-
+const fetch = require("node-fetch"); // або import fetch з node-fetch, якщо потрібен
 const app = express();
-app.use(bodyParser.json());
 
+app.use(express.json()); // щоб Express міг читати JSON від Telegram
+
+// --- GET /alive ---
+app.get("/alive", (req, res) => {
+  res.send("Server is alive ✅");
+});
+
+// --- POST / для Telegram ---
 app.post("/", async (req, res) => {
   try {
     const message = req.body.message;
-    if (!message) return res.sendStatus(200);
 
-    const chatId = message.chat.id;
-    const text = message.text || "";
+    console.log("Incoming Telegram POST:", JSON.stringify(req.body, null, 2));
 
-    // Логіка відповіді консультанта
-    let responseText = "";
+    if (message) {
+      const chatId = message.chat.id;
+      const text = message.text;
 
-    const lowerText = text.toLowerCase();
+      // Тут можна вставити логіку IT-Kitchen
+      // Поки просто відправляємо повідомлення назад
+      const reply = `Привіт! Ти написав: ${text}`;
 
-    if (lowerText.includes("ні") || lowerText.includes("не хочу")) {
-      responseText = "Розумію 😅 Тоді можу розказати про ціни та напрямки курсів: Roblox, Procreate, 3D, AI. Вартість 2400–3200 грн/місяць. Телефон для запису: 093 021 27 47 📞";
-    } else if (lowerText.includes("хочу записатися")) {
-      responseText = "Супер! Зателефонуйте нам для запису: 093 021 27 47 📞";
-    } else {
-      responseText = "Я — ваш інтелектуальний онлайн-консультант IT-Kitchen 👨‍🍳💻✨. Ми навчаємо дітей від 7 років, підлітків і дорослих. Напрямки: 🎮 Roblox/Minecraft, 🎨 Procreate, 🧊 3D (Blender/Tinkercad), ⚙️ Програмування/AI. Вартість: 2400–3200 грн/місяць. Пишіть, якщо хочете тест чи консультацію!";
+      await fetch(`https://api.telegram.org/bot${process.env.TG_TOKEN}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, text: reply })
+      });
     }
 
-    await axios.post(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
-      chat_id: chatId,
-      text: responseText,
-      parse_mode: "Markdown"
-    });
-
-    res.sendStatus(200);
+    // Відповідаємо Telegram 200 OK
+    res.send("OK");
   } catch (err) {
-    console.error(err);
+    console.error("Error in POST /:", err);
     res.sendStatus(500);
   }
 });
 
+// --- PORT ---
 const PORT = process.env.PORT || 3000;
-
-// --------------------
-// POST маршрут для Telegram (тимчасово для дебагу)
-app.post("/", (req, res) => {
-  console.log("Incoming Telegram POST:", JSON.stringify(req.body, null, 2));
-  res.send("OK"); // щоб Telegram більше не давав 404
-});
-// --------------------
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
-// Тестовий маршрут для перевірки, що сервер працює
-app.get("/", (req, res) => {
-  res.send("Server is alive ✅");
+  console.log(`Server is running on port ${PORT}`);
 });
