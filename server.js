@@ -1,155 +1,94 @@
-// server.js
-const express = require('express');
-const { google } = require('googleapis');
-const fetch = require('node-fetch');
+const express = require("express");
+const bodyParser = require("body-parser");
+const axios = require("axios");
+const { GoogleSpreadsheet } = require("google-spreadsheet");
+const fs = require("fs");
+
+const TG_TOKEN = "8588432224:AAE8eQA5xDJiWktiQnhDm0iYzuEd3yZk9s8";
+const SHEET_ID = "1Y57JuWh7QFrJdjHQNxkmOuHK_d-ZN3UyV8Cw-EdWQx0";
+
+// Шлях до Service Account JSON (ми його додаємо у Render як Environment variable)
+const GOOGLE_CREDS_JSON = process.env.GOOGLE_CREDS_JSON;
 
 const app = express();
-app.use(express.json());
+app.use(bodyParser.json());
 
-// ================== Налаштування ==================
-const TG_TOKEN = '8588432224:AAE8eQA5xDJiWktiQnhDm0iYzuEd3yZk9s8';
-const GEMINI_KEY = 'AIzaSyDW_BqFUXOxRjwfmyzm5TqSR3ZHyXDJamw';
-const SHEET_ID = '1Y57JuWh7QFrJdjHQNxkmOuHK_d-ZN3UyV8Cw-EdWQx0';
-
-// Зчитуємо ключ з Environment Variable
-let creds;
-try {
-  creds = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
-} catch (e) {
-  console.error("Не вдалося прочитати GOOGLE_SERVICE_ACCOUNT:", e);
-  process.exit(1); // якщо ключ не встановлено, сервер не стартує
-}
-
-const auth = new google.auth.JWT(
-  creds.client_email,
-  null,
-  creds.private_key.replace(/\\n/g, '\n'),
-  ['https://www.googleapis.com/auth/spreadsheets']
-);
-
-const sheets = google.sheets({ version: 'v4', auth });
-
-// ================== Функції ==================
-
-// Відправка повідомлення Telegram
+// Функція відправки повідомлення в Telegram
 async function sendText(chatId, text) {
-  await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' })
+  await axios.post(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
+    chat_id: chatId,
+    text: text,
+    parse_mode: "Markdown"
   });
 }
 
-// Виклик Gemini 2.0
-async function callGemini(fullPrompt) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_KEY}`;
-  const payload = {
-    contents: [{ parts: [{ text: fullPrompt }] }],
-    generationConfig: { temperature: 0.7, maxOutputTokens: 800 }
-  };
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+// Функція роботи з Google Sheets
+async function updateHistory(chatId, userText, botResponse) {
+  const creds = JSON.parse(GOOGLE_CREDS_JSON);
+  const doc = new GoogleSpreadsheet(SHEET_ID);
+  await doc.useServiceAccountAuth(creds);
+  await doc.loadInfo();
+
+  const sheet = doc.sheetsByIndex[0];
+  await sheet.loadCells();
+
+  // Шукаємо рядок з chatId
+  const rows = await sheet.getRows();
+  let row = rows.find(r => r.ID == chatId);
+  const newHistory = `${userText}\n${botResponse}`;
+
+  if (row) {
+    row.History = (row.History || "") + "\n" + newHistory;
+    row.LastUpdate = new Date();
+    await row.save();
+  } else {
+    await sheet.addRow({
+      ID: chatId,
+      History: newHistory,
+      LastUpdate: new Date()
     });
-    const json = await res.json();
-    if (json.candidates && json.candidates[0] && json.candidates[0].content) {
-      return json.candidates[0].content.parts[0].text;
-    }
-    console.error("Помилка Gemini API:", json);
-    return "Вибачте, сталася технічна заминка. Спробуйте через хвилину!";
-  } catch (e) {
-    console.error("Помилка при виклику Gemini:", e);
-    return "Вибачте, сталася технічна заминка. Спробуйте через хвилину!";
   }
 }
 
-// ================== Основний роут ==================
-app.post('/', async (req, res) => {
+// Основний POST ендпоінт для Telegram
+app.post("/", async (req, res) => {
   try {
-    const data = req.body;
-    if (!data || !data.message) return res.sendStatus(200);
+    const message = req.body.message;
+    if (!message) return res.sendStatus(200);
 
-    const chatId = data.message.chat.id;
-    const userText = data.message.text || "";
-    const userName = data.message.from.first_name || "Клієнт";
+    const chatId = message.chat.id;
+    const userText = message.text || "";
 
-    // ================== Google Sheets ==================
-    const sheetRes = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: 'A:C'
-    });
-    const dataRange = sheetRes.data.values || [];
-    let history = "";
-    let rowIndex = -1;
+    // Логіка відповіді (з твоєї бази консультанта)
+    let botResponse = "";
 
-    for (let i = 0; i < dataRange.length; i++) {
-      if (dataRange[i][0] == chatId) {
-        history = dataRange[i][1] || "";
-        rowIndex = i;
-        break;
-      }
-    }
-
-    // ================== Prompt для Gemini ==================
-    const systemPrompt = `Ти — інтелектуальний онлайн-консультант школи «IT-кухня» 👨‍🍳💻 (Софіївська Борщагівка, пр-т Героїв Небесної Сотні, 18/4). Ти працюєш на платному тарифі, школа незабаром відкривається! 🚀
-Вартість навчання:
-• Ціна: 2400-3200 грн/місяць
-• Точна вартість залежить від курсу, інтенсивності та кількості годин на тиждень. 💰
-База знань:
-• Геймдизайн (Roblox/Minecraft) 🎮
-• Цифровий малюнок (Procreate) 🎨
-• 3D-моделювання (Blender/Tinkercad) 🧊
-• Креатив ⚙️📱🤖
-Логіка тесту:
-1. Пропозиція тесту, якщо клієнт вагається
-2. Відмова — якщо 'ні' або 'не хочу', не пропонуй тест
-3. Якщо 'Ні' або 'Хочу записатися', одразу відповідай про курси/ціни та номер 0930212747
-4. Став питання тесту по черзі (1,2,3), не повторюй тест
-Питання тесту:
-1. Дитині більше подобається створювати руками (як 3D-фігурки), грати чи малювати? 🤔
-2. Це був би світ пригод, професійна картина чи мультфільм? 🌟
-3. Цікавіше розбиратися в програмах чи створювати гарний візуал? ⚙️🎨
-Фінальний аналіз:
-1. Дякую! Вже аналізую ваші відповіді... 🧠✨
-2. Рекомендую 1-2 курси та згадати ціни 2400-3200 грн
-3. Завершити закликом: Зателефонуйте нам: 093 021 27 47 📞
-Стиль: дружній, 2-3 речення, багато емодзі.`;
-
-    const fullPrompt = `${systemPrompt}\n\nІсторія діалогу:\n${history}\nКлієнт (${userName}): ${userText}\nБот:`;
-
-    const botResponse = await callGemini(fullPrompt);
-
-    // ================== Оновлення історії ==================
-    const newHistory = `${history}\nКлієнт: ${userText}\nБот: ${botResponse}`.slice(-3500);
-
-    if (rowIndex >= 0) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: SHEET_ID,
-        range: `B${rowIndex + 1}`,
-        valueInputOption: 'RAW',
-        requestBody: { values: [[newHistory]] },
-      });
+    const lowerText = userText.toLowerCase();
+    if (lowerText.includes("ні") || lowerText.includes("не хочу")) {
+      botResponse = "Розумію 😅 Тоді можу розказати про ціни та напрямки курсів: Roblox, Procreate, 3D, AI. Вартість 2400–3200 грн. Телефон для запису: 093 021 27 47 📞";
+    } else if (lowerText.includes("хочу записатися")) {
+      botResponse = "Супер! Зателефонуйте нам для запису: 093 021 27 47 📞";
     } else {
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: SHEET_ID,
-        range: 'A:C',
-        valueInputOption: 'RAW',
-        requestBody: { values: [[chatId, newHistory, new Date().toISOString()]] },
-      });
+      botResponse = "Я — ваш інтелектуальний онлайн-консультант IT-Kitchen 👨‍🍳💻✨. Ми навчаємо дітей від 7 років, підлітків і дорослих. Напрямки: 🎮 Roblox/Minecraft, 🎨 Procreate, 🧊 3D (Blender/Tinkercad), ⚙️ Програмування/AI. Вартість: 2400–3200 грн/місяць. Пишіть, якщо хочете тест чи консультацію!";
     }
 
-    // ================== Відправка відповіді ==================
-    await sendText(chatId, botResponse);
-    res.sendStatus(200);
+    // Оновлюємо історію в Google Sheets
+    await updateHistory(chatId, userText, botResponse);
 
-  } catch (err) {
-    console.error("Помилка:", err);
+    // Відправляємо відповідь
+    await sendText(chatId, botResponse);
+
     res.sendStatus(200);
+  } catch (err) {
+    console.error(err);
+    res.sendStatus(500);
   }
 });
 
+// Старт сервера на Render
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
 // ================== Запуск сервера ==================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
