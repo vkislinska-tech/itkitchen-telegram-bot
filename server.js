@@ -12,13 +12,15 @@ const PORT = process.env.PORT || 3000;
 const sessions = {};
 
 const SYSTEM_PROMPT = `
-Ти — проактивний ментор школи «IT-кухня» 👨‍🍳💻 (Софіївська Борщагівка).
-Твоя місія: надихати батьків на навчання дітей. Пояснюй користь IT (логіка, креатив).
+Ти — ментор школи «IT-кухня» 👨‍🍳💻.
+ТВОЯ ЗАДАЧА: Спочатку надихнути та розповісти про курси, а лише ПІСЛЯ ЦЬОГО пропонувати дзвінок.
 
-ПРАВИЛА:
-1. Відповідай коротко (до 3 речень).
-2. Якщо клієнт зацікавився, запитай: "Хочете, наш адміністратор Вікторія зателефонує вам, щоб все розповісти та підібрати час?"
-3. Якщо клієнт згоден, пиши ТІЛЬКИ: "Чудово! Натисніть кнопку нижче, щоб поділитися номером, і ми зв'яжемося з вами. ✨"
+ЛОГІКА СПІЛКУВАННЯ:
+1. На старті: Просто вітайся і запитуй, що цікавить (малювання, ігри чи 3D).
+2. В процесі: Розповідай про користь (логіка, креатив, майбутнє).
+3. ПУНКТ "ДЗВІНОК" (Тільки в кінці розмови): 
+   - Коли клієнт отримав відповідь на своє питання, запитай: "До речі, хочете, наш адмін Вікторія зателефонує вам, щоб підібрати зручний час для пробного заняття?"
+4. Якщо клієнт згоден, пиши ТІЛЬКИ: "Чудово! Натисніть кнопку нижче, щоб поділитися номером, і ми зв'яжемося з вами. ✨"
 `;
 
 app.get('/alive', (req, res) => res.send('Server is alive ✅'));
@@ -30,31 +32,26 @@ app.post('/', async (req, res) => {
 
         const chatId = message.chat.id;
 
-        // --- 1. ПЕРЕХОПЛЕННЯ НОМЕРА ТА ІСТОРІЇ РОЗМОВИ ---
+        // --- 1. ПЕРЕХОПЛЕННЯ НОМЕРА (Lead Generation) ---
         if (message.contact && ADMIN_ID) {
             const phone = message.contact.phone_number;
             const firstName = message.contact.first_name;
             const chatLink = `tg://user?id=${message.from.id}`;
             
-            // Збираємо контекст: про що питав клієнт (останні 3-4 повідомлення)
-            let contextSummary = "Немає даних";
+            let contextSummary = "Цікавились навчанням";
             if (sessions[chatId]) {
                 contextSummary = sessions[chatId]
                     .filter(msg => msg.role === "user" && !msg.parts[0].text.includes(SYSTEM_PROMPT))
                     .map(msg => `• ${msg.parts[0].text}`)
-                    .slice(-3) // Беремо останні 3 питання клієнта
-                    .join("\n");
+                    .slice(-3).join("\n");
             }
 
-            const adminMessage = `🚀 НОВА ЗАЯВКА!\n\n👤 Ім'я: ${firstName}\n📱 Тел: ${phone}\n\n🔍 ЧИМ ЦІКАВИЛИСЬ:\n${contextSummary}\n\n💬 [НАПИСАТИ В ТЕЛЕГРАМ](${chatLink})`;
-
-            // Сповіщення Вікторії
             await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     chat_id: ADMIN_ID,
-                    text: adminMessage,
+                    text: `🚀 ЗАЯВКА!\n👤 ${firstName}\n📱 ${phone}\n🔍 КОНТЕКСТ:\n${contextSummary}\n\n💬 [ЧАТ](${chatLink})`,
                     parse_mode: 'Markdown'
                 })
             });
@@ -64,7 +61,7 @@ app.post('/', async (req, res) => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     chat_id: chatId,
-                    text: "Дякуємо! Отримали ваш контакт. Вікторія зателефонує вам найближчим часом! ✨",
+                    text: "Дякую! Вікторія отримала ваш номер і зателефонує вам найближчим часом. До зустрічі в IT Kitchen! ✨",
                     reply_markup: { remove_keyboard: true }
                 })
             });
@@ -74,12 +71,22 @@ app.post('/', async (req, res) => {
         const userText = message.text.trim();
 
         // --- 2. ПАМ'ЯТЬ ТА AI ---
+        if (userText.toLowerCase() === '/start') {
+            delete sessions[chatId]; // Скидаємо стару розмову при старті
+            return await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    text: "Привіт! Вітаємо в IT Kitchen 👨‍🍳✨ Тут ми готуємо майбутнє власними руками. Чим цікавиться ваша дитина? Можливо, вона обожнює ігри чи малювання? 🤖🎨"
+                })
+            });
+        }
+
         if (!sessions[chatId]) {
             sessions[chatId] = [{ role: "user", parts: [{ text: SYSTEM_PROMPT }] }];
         }
         sessions[chatId].push({ role: "user", parts: [{ text: userText }] });
-
-        if (sessions[chatId].length > 10) sessions[chatId].splice(1, 1);
 
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, {
             method: 'POST',
@@ -91,12 +98,12 @@ app.post('/', async (req, res) => {
         const replyText = data.candidates[0].content.parts[0].text;
         sessions[chatId].push({ role: "model", parts: [{ text: replyText }] });
 
-        // --- 3. ВІДПРАВКА ВІДПОВІДІ З КНОПКОЮ ---
+        // --- 3. ВІДПРАВКА ВІДПОВІДІ ---
         const payload = { chat_id: chatId, text: replyText };
 
         if (replyText.includes("Натисніть кнопку нижче")) {
             payload.reply_markup = {
-                keyboard: [[{ text: "📱 Поділитися номером", request_contact: true }]],
+                keyboard: [[{ text: "📱 Поділитися моїм номером", request_contact: true }]],
                 one_time_keyboard: true,
                 resize_keyboard: true
             };
@@ -112,4 +119,4 @@ app.post('/', async (req, res) => {
     res.sendStatus(200);
 });
 
-app.listen(PORT, () => console.log(`Smart Admin Bot is Live!`));
+app.listen(PORT, () => console.log(`Smart Logic Bot is Live!`));
