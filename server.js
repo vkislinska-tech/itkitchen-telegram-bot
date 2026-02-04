@@ -1,10 +1,8 @@
-// server.js
-
 const express = require("express");
-const fetch = require("node-fetch"); // або import fetch з node-fetch, якщо потрібен
+const fetch = require("node-fetch"); // або import fetch
 const app = express();
 
-app.use(express.json()); // щоб Express міг читати JSON від Telegram
+app.use(express.json());
 
 // --- GET /alive ---
 app.get("/alive", (req, res) => {
@@ -15,17 +13,13 @@ app.get("/alive", (req, res) => {
 app.post("/", async (req, res) => {
   try {
     const message = req.body.message;
-
     console.log("Incoming Telegram POST:", JSON.stringify(req.body, null, 2));
 
     if (message) {
       const chatId = message.chat.id;
       const text = message.text;
 
-      // Тут можна вставити логіку IT-Kitchen
-      // Поки просто відправляємо повідомлення назад
       const reply = `Привіт! Ти написав: ${text}`;
-
       await fetch(`https://api.telegram.org/bot${process.env.TG_TOKEN}/sendMessage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -33,7 +27,6 @@ app.post("/", async (req, res) => {
       });
     }
 
-    // Відповідаємо Telegram 200 OK
     res.send("OK");
   } catch (err) {
     console.error("Error in POST /:", err);
