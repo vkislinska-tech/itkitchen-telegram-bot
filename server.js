@@ -52,16 +52,14 @@ app.post('/', async (req, res) => {
         const userText = message.text.trim();
         let replyText = "";
 
-        // --- ШВИДКІ ВІДПОВІДІ ---
         if (userText === '/start') {
             replyText = "Привіт! Вітаємо в IT Kitchen — просторі цифрових талантів! 👨‍🍳✨\nМи знаходимось на Софіївській Борщагівці. Чим цікавиться ваша дитина? 🤖🎨";
-        } 
-        // --- РОЗУМНА ВІДПОВІДЬ (GEMINI 1.5 FLASH) ---
-        else {
+        } else {
             if (GEMINI_KEY) {
                 try {
-                    // ТУТ ВИПРАВЛЕНО: gemini-1.5-flash-001
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent?key=${GEMINI_KEY}`, {
+                    // ПРОБУЄМО GEMINI 2.0 FLASH
+                    // Якщо не вийде - в логах побачимо помилку, але це найсучасніша модель
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -79,7 +77,8 @@ app.post('/', async (req, res) => {
                         replyText = data.candidates[0].content.parts[0].text;
                     } else if (data.error) {
                         console.log("GEMINI ERROR:", JSON.stringify(data));
-                        replyText = "⚠️ Помилка AI: " + data.error.message;
+                        // Якщо 2.0 не пішла, напишемо зрозумілу помилку
+                        replyText = "⚠️ Помилка моделі 2.0: " + data.error.message;
                     } else {
                         replyText = "Зараз я трохи думаю... Спробуй запитати інакше! 🤔";
                     }
