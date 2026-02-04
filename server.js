@@ -1,11 +1,10 @@
 // server.js
 const express = require('express');
-const bodyParser = require('body-parser');
 const { google } = require('googleapis');
-const fetch = require('node-fetch'); // для запитів до Telegram та Gemini
+const fetch = require('node-fetch');
 
 const app = express();
-app.use(bodyParser.json());
+app.use(express.json());
 
 // ================== Налаштування ==================
 const TG_TOKEN = '8588432224:AAE8eQA5xDJiWktiQnhDm0iYzuEd3yZk9s8';
@@ -13,19 +12,58 @@ const GEMINI_KEY = 'AIzaSyDW_BqFUXOxRjwfmyzm5TqSR3ZHyXDJamw';
 const SHEET_ID = '1Y57JuWh7QFrJdjHQNxkmOuHK_d-ZN3UyV8Cw-EdWQx0';
 
 // Зчитуємо ключ з Environment Variable
-const creds = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
-
-const client_email = creds.client_email;
-const private_key = creds.private_key.replace(/\\n/g, '\n'); // заміна \n
+let creds;
+try {
+  creds = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
+} catch (e) {
+  console.error("Не вдалося прочитати GOOGLE_SERVICE_ACCOUNT:", e);
+  process.exit(1); // якщо ключ не встановлено, сервер не стартує
+}
 
 const auth = new google.auth.JWT(
-  client_email,
+  creds.client_email,
   null,
-  private_key,
+  creds.private_key.replace(/\\n/g, '\n'),
   ['https://www.googleapis.com/auth/spreadsheets']
 );
 
 const sheets = google.sheets({ version: 'v4', auth });
+
+// ================== Функції ==================
+
+// Відправка повідомлення Telegram
+async function sendText(chatId, text) {
+  await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' })
+  });
+}
+
+// Виклик Gemini 2.0
+async function callGemini(fullPrompt) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_KEY}`;
+  const payload = {
+    contents: [{ parts: [{ text: fullPrompt }] }],
+    generationConfig: { temperature: 0.7, maxOutputTokens: 800 }
+  };
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const json = await res.json();
+    if (json.candidates && json.candidates[0] && json.candidates[0].content) {
+      return json.candidates[0].content.parts[0].text;
+    }
+    console.error("Помилка Gemini API:", json);
+    return "Вибачте, сталася технічна заминка. Спробуйте через хвилину!";
+  } catch (e) {
+    console.error("Помилка при виклику Gemini:", e);
+    return "Вибачте, сталася технічна заминка. Спробуйте через хвилину!";
+  }
+}
 
 // ================== Основний роут ==================
 app.post('/', async (req, res) => {
@@ -37,12 +75,11 @@ app.post('/', async (req, res) => {
     const userText = data.message.text || "";
     const userName = data.message.from.first_name || "Клієнт";
 
-    // ================== Читання історії з Google Sheets ==================
+    // ================== Google Sheets ==================
     const sheetRes = await sheets.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
-      range: 'A:C', // стовпчик A: chatId, B: history, C: last update
+      range: 'A:C'
     });
-
     const dataRange = sheetRes.data.values || [];
     let history = "";
     let rowIndex = -1;
@@ -55,7 +92,7 @@ app.post('/', async (req, res) => {
       }
     }
 
-    // ================== Формування відповіді ==================
+    // ================== Prompt для Gemini ==================
     const systemPrompt = `Ти — інтелектуальний онлайн-консультант школи «IT-кухня» 👨‍🍳💻 (Софіївська Борщагівка, пр-т Героїв Небесної Сотні, 18/4). Ти працюєш на платному тарифі, школа незабаром відкривається! 🚀
 Вартість навчання:
 • Ціна: 2400-3200 грн/місяць
@@ -65,7 +102,7 @@ app.post('/', async (req, res) => {
 • Цифровий малюнок (Procreate) 🎨
 • 3D-моделювання (Blender/Tinkercad) 🧊
 • Креатив ⚙️📱🤖
-Логіка тесту (СУВОРО):
+Логіка тесту:
 1. Пропозиція тесту, якщо клієнт вагається
 2. Відмова — якщо 'ні' або 'не хочу', не пропонуй тест
 3. Якщо 'Ні' або 'Хочу записатися', одразу відповідай про курси/ціни та номер 0930212747
@@ -103,50 +140,15 @@ app.post('/', async (req, res) => {
       });
     }
 
-    // ================== Відправка відповіді в Telegram ==================
+    // ================== Відправка відповіді ==================
     await sendText(chatId, botResponse);
-
     res.sendStatus(200);
+
   } catch (err) {
     console.error("Помилка:", err);
     res.sendStatus(200);
   }
 });
-
-// ================== Функція виклику Gemini ==================
-async function callGemini(fullPrompt) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_KEY}`;
-
-  const payload = {
-    contents: [{ parts: [{ text: fullPrompt }] }],
-    generationConfig: { temperature: 0.7, maxOutputTokens: 800 }
-  };
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-
-  const json = await res.json();
-
-  if (json.candidates && json.candidates[0] && json.candidates[0].content) {
-    return json.candidates[0].content.parts[0].text;
-  } else {
-    console.error("Помилка Gemini API:", json);
-    return "Вибачте, сталася технічна заминка. Спробуйте через хвилину!";
-  }
-}
-
-// ================== Функція відправки Telegram ==================
-async function sendText(chatId, text) {
-  const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
-  await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' })
-  });
-}
 
 // ================== Запуск сервера ==================
 const PORT = process.env.PORT || 3000;
