@@ -74,7 +74,21 @@ app.post('/', async (req, res) => {
 
         if (!message.text) return;
         let userText = message.text;
-
+       
+// --- ЛОГІКА ЛОКАЦІЇ (КАРТА) ---
+        const lowText = userText.toLowerCase().trim();
+        if (lowText === '/location' || lowText.includes('локація')) {
+            await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendLocation`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    latitude: 50.39571, // Координати ЖК «У квартал»
+                    longitude: 30.34724
+                })
+            });
+        }
+       
         // --- 2. ЛОГІКА /START ---
         if (userText === '/start') { 
             sessions[chatId] = [];
