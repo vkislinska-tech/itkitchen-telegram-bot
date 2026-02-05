@@ -76,18 +76,18 @@ app.post('/', async (req, res) => {
         let userText = message.text;
        
 // --- ЛОГІКА ЛОКАЦІЇ (КАРТА) ---
-        const lowText = userText.toLowerCase().trim();
-        if (lowText === '/location' || lowText.includes('локація')) {
-            await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendLocation`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    chat_id: chatId,
-                    latitude: 50.39925, 
-                    longitude: 30.33856
-                })
-            });
-        }
+const lowText = userText.toLowerCase().trim();
+if (lowText === '/location' || lowText.includes('локація')) {
+    await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendLocation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            chat_id: chatId,
+            latitude: 50.39925, 
+            longitude: 30.33856
+        })
+    });
+}
        
         // --- 2. ЛОГІКА /START ---
         if (userText === '/start') { 
