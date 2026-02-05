@@ -60,10 +60,11 @@ app.post('/', async (req, res) => {
         const userText = message.text;
 
         // --- 2. ЛОГІКА /START ---
-        if (userText === '/start') { 
-            delete sessions[chatId]; 
-            return res.json({ method: "sendMessage", chat_id: chatId, text: "Привіт! Вітаємо в IT Kitchen 👨‍🍳✨ Ми готуємося до відкриття та вже ведемо передзапис у групи. Чим найбільше цікавиться ваша дитина: малюванням, іграми чи, можливо, 3D? 🤖🎨" }); 
-        }
+if (userText === '/start') { 
+    delete sessions[chatId]; 
+    // Ми НЕ повертаємо тут текст через return res.json, 
+    // щоб код пішов далі до блоку "3. ПАМ'ЯТЬ ТА AI"
+}
         
         // --- 3. ПАМ'ЯТЬ ТА AI ---
         if (!sessions[chatId]) sessions[chatId] = [{ role: "user", parts: [{ text: SYSTEM_PROMPT }] }];
