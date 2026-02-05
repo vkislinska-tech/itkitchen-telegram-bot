@@ -78,13 +78,20 @@ if (userText === '/start') {
         if (!sessions[chatId]) sessions[chatId] = [{ role: "user", parts: [{ text: SYSTEM_PROMPT }] }];
         sessions[chatId].push({ role: "user", parts: [{ text: userText }] });
        
-const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, {
+// 1. Створюємо надійний таймер на 60 секунд
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000); 
+
+        // 2. Робимо запит (цей код зрозуміє будь-який сервер)
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, {
             method: 'POST',
-            signal: AbortSignal.timeout(90000), // Збільшили до 90 секунд
+            signal: controller.signal, // Підключаємо наш таймер сюди
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: sessions[chatId] }),
-            keepalive: true // <--- Головна "фішка", яка тримає з'єднання
+            body: JSON.stringify({ contents: sessions[chatId] })
         });
+        
+        // 3. Якщо відповідь прийшла - вимикаємо таймер
+        clearTimeout(timeoutId);
 
         const data = await response.json();
         const replyText = data.candidates?.[0]?.content?.parts?.[0]?.text || "Замислився трішки... Спробуйте ще раз! 🤔";
