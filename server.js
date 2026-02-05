@@ -78,6 +78,13 @@ if (userText === '/start') {
         if (!sessions[chatId]) sessions[chatId] = [{ role: "user", parts: [{ text: SYSTEM_PROMPT }] }];
         sessions[chatId].push({ role: "user", parts: [{ text: userText }] });
        
+       // Оптимізація пам'яті: тримаємо тільки останні 6 повідомлень + інструкцію
+        if (sessions[chatId].length > 7) {
+            sessions[chatId] = [
+                sessions[chatId][0], 
+                ...sessions[chatId].slice(-6)
+            ];
+        }
 // 1. Створюємо надійний таймер на 60 секунд
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 60000); 
