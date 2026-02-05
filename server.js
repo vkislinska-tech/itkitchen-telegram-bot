@@ -83,8 +83,8 @@ app.post('/', async (req, res) => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     chat_id: chatId,
-                    latitude: 50.39571, // Координати ЖК «У квартал»
-                    longitude: 30.34724
+                    latitude: 50.39925, 
+                    longitude: 30.33856
                 })
             });
         }
