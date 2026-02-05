@@ -77,13 +77,13 @@ if (userText === '/start') {
         // --- 3. ПАМ'ЯТЬ ТА AI ---
         if (!sessions[chatId]) sessions[chatId] = [{ role: "user", parts: [{ text: SYSTEM_PROMPT }] }];
         sessions[chatId].push({ role: "user", parts: [{ text: userText }] });
-
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, {
+       
+const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, {
             method: 'POST',
-            signal: AbortSignal.timeout(90000), // Чекаємо 90 секунд
+            signal: AbortSignal.timeout(90000), // Збільшили до 90 секунд
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ contents: sessions[chatId] }),
-            keepalive: true // Тримаємо з'єднання
+            keepalive: true // <--- Головна "фішка", яка тримає з'єднання
         });
 
         const data = await response.json();
