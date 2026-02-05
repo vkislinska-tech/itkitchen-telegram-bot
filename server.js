@@ -80,10 +80,9 @@ if (userText === '/start') {
 
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, {
             method: 'POST',
-            signal: AbortSignal.timeout(90000), // Чекаємо 90 секунд
+            signal: AbortSignal.timeout(60000), //
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: sessions[chatId] }),
-            keepalive: true // Тримаємо з'єднання
+            body: JSON.stringify({ contents: sessions[chatId] })
         });
 
         const data = await response.json();
