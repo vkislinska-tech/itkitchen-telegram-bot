@@ -1,4 +1,4 @@
-const express = require('express');
+Const express = require('express');
 const fetch = require('node-fetch');
 const app = express();
 app.use(express.json());
@@ -77,13 +77,28 @@ if (userText === '/start') {
         // --- 3. ПАМ'ЯТЬ ТА AI ---
         if (!sessions[chatId]) sessions[chatId] = [{ role: "user", parts: [{ text: SYSTEM_PROMPT }] }];
         sessions[chatId].push({ role: "user", parts: [{ text: userText }] });
+       
+       // Оптимізація пам'яті: тримаємо тільки останні 6 повідомлень + інструкцію
+        if (sessions[chatId].length > 7) {
+            sessions[chatId] = [
+                sessions[chatId][0], 
+                ...sessions[chatId].slice(-6)
+            ];
+        }
+// 1. Створюємо надійний таймер на 60 секунд
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000); 
 
+        // 2. Робимо запит (цей код зрозуміє будь-який сервер)
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, {
             method: 'POST',
-            signal: AbortSignal.timeout(60000), //
+            signal: controller.signal, // Підключаємо наш таймер сюди
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ contents: sessions[chatId] })
         });
+        
+        // 3. Якщо відповідь прийшла - вимикаємо таймер
+        clearTimeout(timeoutId);
 
         const data = await response.json();
         const replyText = data.candidates?.[0]?.content?.parts?.[0]?.text || "Замислився трішки... Спробуйте ще раз! 🤔";
