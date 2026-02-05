@@ -6,6 +6,9 @@ app.use(express.json());
 const { TG_TOKEN, GEMINI_KEY, ADMIN_ID, PORT = 3000 } = process.env;
 const sessions = {};
 
+// Ліміт історії діалогу (без урахування системного промпту)
+const MAX_HISTORY = 10; 
+
 const SYSTEM_PROMPT = `
 Ти — інтелектуальний ментор школи «IT-кухня» 👨‍🍳💻 (Софіївська Борщагівка).
 
@@ -48,7 +51,7 @@ app.post('/', async (req, res) => {
             let context = "Передзапис / Розклад";
             if (sessions[chatId]) {
                 context = sessions[chatId]
-                    .filter(msg => msg.role === "user" && !msg.parts[0].text.includes("Ти —"))
+                    .filter(msg => msg.role === "user")
                     .map(msg => msg.parts[0].text).slice(-3).join(" | ");
             }
 
@@ -57,38 +60,67 @@ app.post('/', async (req, res) => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     chat_id: ADMIN_ID,
-                    text: `🚀 ЗАЯВКА (ПЕРЕДЗАПИС)!\n👤 ${message.contact.first_name}\n📱 ${message.contact.phone_number}\n🔍 ПИТАЛИ: ${context}\n💬 [ЧАТ](${chatLink})`,
+                    text: `🚀 ЗАЯВКА!\n👤 ${message.contact.first_name}\n📱 ${message.contact.phone_number}\n🔍 ПИТАЛИ: ${context}\n💬 [ЧАТ](${chatLink})`,
                     parse_mode: 'Markdown'
                 })
             });
-            return res.json({ method: "sendMessage", chat_id: chatId, text: "Дякую! Вікторія отримала ваш контакт і зателефонує вам щодо деталей розкладу та броні місця! ✨", reply_markup: { remove_keyboard: true } });
+            return res.json({ method: "sendMessage", chat_id: chatId, text: "Дякую! Вікторія отримала ваш контакт і зателефонує вам найближчим часом! ✨", reply_markup: { remove_keyboard: true } });
         }
 
         if (!message.text) return res.sendStatus(200);
         const userText = message.text;
 
         // --- 2. ЛОГІКА /START ---
-if (userText === '/start') { 
-    delete sessions[chatId]; 
-    // Ми НЕ повертаємо тут текст через return res.json, 
-    // щоб код пішов далі до блоку "3. ПАМ'ЯТЬ ТА AI"
-}
+        if (userText === '/start') { 
+            sessions[chatId] = []; // Повністю очищуємо історію
+        }
         
-        // --- 3. ПАМ'ЯТЬ ТА AI ---
-        if (!sessions[chatId]) sessions[chatId] = [{ role: "user", parts: [{ text: SYSTEM_PROMPT }] }];
+        // --- 3. ПІДГОТОВКА ІСТОРІЇ ---
+        if (!sessions[chatId]) sessions[chatId] = [];
+
+        // Додаємо повідомлення користувача
         sessions[chatId].push({ role: "user", parts: [{ text: userText }] });
 
+        // Обрізаємо історію
+        if (sessions[chatId].length > MAX_HISTORY) {
+            sessions[chatId] = sessions[chatId].slice(-MAX_HISTORY);
+        }
+
+        // --- 4. ЗАПИТ ДО GEMINI ---
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: sessions[chatId] })
+            body: JSON.stringify({ 
+                // Виносимо промпт в System Instruction
+                system_instruction: {
+                    parts: [{ text: SYSTEM_PROMPT }]
+                },
+                contents: sessions[chatId],
+                safetySettings: [
+                    { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+                    { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+                    { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+                    { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+                ]
+            })
         });
 
         const data = await response.json();
-        const replyText = data.candidates?.[0]?.content?.parts?.[0]?.text || "Замислився трішки... Спробуйте ще раз! 🤔";
+        
+        let replyText = "";
+        if (data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+            replyText = data.candidates[0].content.parts[0].text;
+        } else if (data.error) {
+            console.error("Gemini API Error:", data.error.message);
+            replyText = "Трішки оновлюю інформацію... Напишіть, будь ласка, ще раз! 👨‍🍳";
+        } else {
+            replyText = "Замислився трішки... Спробуйте перефразувати запитання! 🤔";
+        }
+
+        // Зберігаємо відповідь бота
         sessions[chatId].push({ role: "model", parts: [{ text: replyText }] });
 
-        // --- 4. ВІДПРАВКА ВІДПОВІДІ ---
+        // --- 5. ВІДПРАВКА ---
         const payload = { chat_id: chatId, text: replyText };
         if (replyText.includes("Натисніть кнопку нижче")) {
             payload.reply_markup = { 
@@ -103,7 +135,10 @@ if (userText === '/start') {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-    } catch (e) { console.error(e); }
+
+    } catch (e) { 
+        console.error("Global Error:", e); 
+    }
     res.sendStatus(200);
 });
 
