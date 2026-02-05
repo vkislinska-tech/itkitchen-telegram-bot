@@ -36,9 +36,12 @@ const SYSTEM_PROMPT = `
 app.get('/alive', (req, res) => res.send('Kitchen is heating up! 👨‍🍳'));
 
 app.post('/', async (req, res) => {
+    // Одразу відповідаємо Телеграму, щоб він не дублював запити
+    res.sendStatus(200);
+
     try {
         const { message } = req.body;
-        if (!message) return res.sendStatus(200);
+        if (!message || !message.chat) return;
         const chatId = message.chat.id;
 
         // 1. ОБРОБКА КОНТАКТУ
@@ -57,32 +60,38 @@ app.post('/', async (req, res) => {
                     parse_mode: 'Markdown'
                 })
             });
-            return res.json({ method: "sendMessage", chat_id: chatId, text: "Дякую! Вікторія отримала ваш контакт і зателефонує вам найближчим часом! ✨", reply_markup: { remove_keyboard: true } });
+            await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId, text: "Дякую! Вікторія отримала ваш контакт і зателефонує вам найближчим часом! ✨", reply_markup: { remove_keyboard: true } })
+            });
+            return;
         }
 
-        if (!message.text) return res.sendStatus(200);
-        const userText = message.text;
+        if (!message.text) return;
+        let userText = message.text;
 
-        // --- 2. ЛОГІКА /START ---
+        // 2. ЛОГІКА /START
         if (userText === '/start') { 
-            sessions[chatId] = []; // Очищуємо пам'ять для нового старту
+            sessions[chatId] = [];
+            // Робимо підказку для ШІ, щоб він зрозумів, що треба привітатися
+            userText = "Привіт! Я розпочинаю чат. Розкажи, хто ти і як можеш мені допомогти.";
         }
         
         if (!sessions[chatId]) sessions[chatId] = [];
 
-        // Перевірка, щоб не було двох повідомлень 'user' підряд (важливо для Gemini)
+        // Захист черги
         if (sessions[chatId].length > 0 && sessions[chatId][sessions[chatId].length - 1].role === "user") {
             sessions[chatId].pop();
         }
 
-        // Додаємо текст (включаючи /start) до історії
         sessions[chatId].push({ role: "user", parts: [{ text: userText }] });
 
         if (sessions[chatId].length > MAX_HISTORY) {
             sessions[chatId] = sessions[chatId].slice(-MAX_HISTORY);
         }
 
-        // --- 3. ЗАПИТ ДО GEMINI 2.0 FLASH ---
+        // 3. ЗАПИТ ДО GEMINI 2.0 FLASH
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -105,13 +114,11 @@ app.post('/', async (req, res) => {
             replyText = data.candidates[0].content.parts[0].text;
             sessions[chatId].push({ role: "model", parts: [{ text: replyText }] });
         } else {
-            // Якщо API видало помилку, прибираємо останнє повідомлення користувача, щоб не збити чергу
             sessions[chatId].pop(); 
-            console.error("Gemini API Error:", JSON.stringify(data));
-            replyText = "Замислився трішки... Спробуйте написати ще раз! 🤔";
+            replyText = "Вітаю! ✨ Я — ментор «IT-кухні». Трішки замислився, але вже готовий відповідати! Про який курс вам розповісти?";
         }
 
-        // --- 4. ВІДПРАВКА ВІДПОВІДІ ---
+        // 4. ВІДПРАВКА
         const payload = { chat_id: chatId, text: replyText };
         if (replyText.includes("Натисніть кнопку нижче")) {
             payload.reply_markup = { 
@@ -127,8 +134,9 @@ app.post('/', async (req, res) => {
             body: JSON.stringify(payload)
         });
 
-    } catch (e) { console.error("Critical Error:", e); }
-    res.sendStatus(200);
+    } catch (e) { 
+        console.error("Critical Error:", e); 
+    }
 });
 
-app.listen(PORT, () => console.log(`Mentor 2.0 is online!`));
+app.listen(PORT, () => console.log(`Mentor is live!`));
