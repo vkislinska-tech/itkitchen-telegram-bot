@@ -1,5 +1,5 @@
 const express = require('express');
-const fetch = require('node-fetch');
+const fetch = require('node-fetch'); // Переконайтеся, що node-fetch встановлено
 const app = express();
 app.use(express.json());
 
@@ -34,22 +34,29 @@ const SYSTEM_PROMPT = `
 - ТРИГЕР КНОПКИ: Якщо згодні, пиши ТІЛЬКИ: "Чудово! Натисніть кнопку нижче, щоб поділитися номером, і ми зв'яжемося з вами. ✨"
 `;
 
+// Цей маршрут потрібен для Cron-job, щоб будити бота
 app.get('/alive', (req, res) => res.send('Kitchen is heating up! 👨‍🍳'));
 
 app.post('/', async (req, res) => {
+    // Відповідаємо Telegram одразу, щоб він не повторював запити
+    res.sendStatus(200);
+
     try {
         const { message } = req.body;
-        if (!message) return res.sendStatus(200);
+        if (!message) return;
         const chatId = message.chat.id;
 
         // --- 1. ОБРОБКА КОНТАКТУ ---
         if (message.contact && ADMIN_ID) {
             const chatLink = `tg://user?id=${message.from.id}`;
             let context = "Передзапис / Розклад";
-            if (sessions[chatId]) {
-                context = sessions[chatId]
+            
+            // Спробуємо дістати контекст, якщо він є
+            if (sessions[chatId] && sessions[chatId].length > 0) {
+                 const history = sessions[chatId]
                     .filter(msg => msg.role === "user" && !msg.parts[0].text.includes("Ти —"))
-                    .map(msg => msg.parts[0].text).slice(-3).join(" | ");
+                    .map(msg => msg.parts[0].text);
+                 if (history.length > 0) context = history.slice(-3).join(" | ");
             }
 
             await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
@@ -61,66 +68,86 @@ app.post('/', async (req, res) => {
                     parse_mode: 'Markdown'
                 })
             });
-            return res.json({ method: "sendMessage", chat_id: chatId, text: "Дякую! Вікторія отримала ваш контакт і зателефонує вам щодо деталей розкладу та броні місця! ✨", reply_markup: { remove_keyboard: true } });
+            
+            // Відповідь користувачу після заявки
+            await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    text: "Дякую! Вікторія отримала ваш контакт і зателефонує вам щодо деталей розкладу та броні місця! ✨", 
+                    reply_markup: { remove_keyboard: true } 
+                })
+            });
+            return;
         }
 
-        if (!message.text) return res.sendStatus(200);
+        if (!message.text) return;
         const userText = message.text;
 
         // --- 2. ЛОГІКА /START ---
-if (userText === '/start') { 
-    delete sessions[chatId]; 
-    // Ми НЕ повертаємо тут текст через return res.json, 
-    // щоб код пішов далі до блоку "3. ПАМ'ЯТЬ ТА AI"
-}
+        if (userText === '/start') { 
+            delete sessions[chatId]; 
+        }
         
         // --- 3. ПАМ'ЯТЬ ТА AI ---
         if (!sessions[chatId]) sessions[chatId] = [{ role: "user", parts: [{ text: SYSTEM_PROMPT }] }];
         sessions[chatId].push({ role: "user", parts: [{ text: userText }] });
-       
-       // Оптимізація пам'яті: тримаємо тільки останні 6 повідомлень + інструкцію
-        if (sessions[chatId].length > 7) {
-            sessions[chatId] = [
+
+        // ОЧИЩЕННЯ ПАМ'ЯТІ: Тримаємо тільки останні 6 повідомлень + інструкцію
+        if (sessions[chatId].length > 13) { 
+             sessions[chatId] = [
                 sessions[chatId][0], 
-                ...sessions[chatId].slice(-6)
+                ...sessions[chatId].slice(-10) 
             ];
         }
-// 1. Створюємо надійний таймер на 60 секунд
+
+        // --- ЗАПИТ ДО GEMINI З ТАЙМЕРОМ ---
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 60000); 
+        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 секунд чекаємо
 
-        // 2. Робимо запит (цей код зрозуміє будь-який сервер)
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, {
-            method: 'POST',
-            signal: controller.signal, // Підключаємо наш таймер сюди
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: sessions[chatId] })
-        });
-        
-        // 3. Якщо відповідь прийшла - вимикаємо таймер
-        clearTimeout(timeoutId);
+        try {
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents: sessions[chatId] }),
+                signal: controller.signal // Підключаємо наш контролер
+            });
+            clearTimeout(timeoutId); // Якщо встигли - скасовуємо таймер
 
-        const data = await response.json();
-        const replyText = data.candidates?.[0]?.content?.parts?.[0]?.text || "Замислився трішки... Спробуйте ще раз! 🤔";
-        sessions[chatId].push({ role: "model", parts: [{ text: replyText }] });
+            const data = await response.json();
+            const replyText = data.candidates?.[0]?.content?.parts?.[0]?.text || "Замислився трішки... Спробуйте ще раз! 🤔";
+            sessions[chatId].push({ role: "model", parts: [{ text: replyText }] });
 
-        // --- 4. ВІДПРАВКА ВІДПОВІДІ ---
-        const payload = { chat_id: chatId, text: replyText };
-        if (replyText.includes("Натисніть кнопку нижче")) {
-            payload.reply_markup = { 
-                keyboard: [[{ text: "📱 Поділитися номером", request_contact: true }]], 
-                one_time_keyboard: true, 
-                resize_keyboard: true 
-            };
+            // --- 4. ВІДПРАВКА ВІДПОВІДІ ---
+            const payload = { chat_id: chatId, text: replyText };
+            
+            // Перевірка на кнопку
+            if (replyText.includes("Натисніть кнопку нижче")) {
+                payload.reply_markup = { 
+                    keyboard: [[{ text: "📱 Поділитися номером", request_contact: true }]], 
+                    one_time_keyboard: true, 
+                    resize_keyboard: true 
+                };
+            }
+
+            await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+        } catch (fetchError) {
+            console.error("Gemini Error:", fetchError);
+            // Якщо таймер спрацював або помилка мережі
+            await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    text: "Вибачте, зараз дуже багато запитів. Спробуйте запитати ще раз через хвилинку! 👨‍🍳"
+                })
+            });
         }
 
-        await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-    } catch (e) { console.error(e); }
-    res.sendStatus(200);
-});
-
-app.listen(PORT, () => console.log(`Mentor is online!`));
+    } catch (
